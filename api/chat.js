@@ -1,36 +1,39 @@
+// api/chat.js
+import OpenAI from "openai";
+
+// Initialize the client
+const client = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
+// Vercel handler
 export default async function handler(req, res) {
+  if (req.method !== "POST") {
+    return res.status(405).json({ reply: "Method not allowed" });
+  }
+
   try {
-    const body = req.body || {};
-    const messages = body.messages || [];
+    const { messages } = req.body;
 
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        messages,
-        temperature: 0.7,
-      }),
-    });
-
-    const data = await response.json();
-
-    if (response.status !== 200) {
-      console.error("OpenAI API error:", data);
-      return res
-        .status(response.status)
-        .json({ reply: `OpenAI error: ${data.error?.message || "Unknown error"}` });
+    // ✅ Handle empty or invalid body
+    if (!messages || !Array.isArray(messages) || messages.length === 0) {
+      return res.status(400).json({
+        reply: "Error: Missing or invalid 'messages' array in request body.",
+      });
     }
 
-    const reply = data.choices?.[0]?.message?.content || "Sorry, I didn’t catch that.";
+    // ✅ Generate a response from GPT
+    const completion = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages,
+    });
+
+    const reply = completion.choices[0].message.content;
     res.status(200).json({ reply });
   } catch (error) {
-    console.error("Error in /api/chat:", error);
-    res.status(500).json({
-      reply: `Internal error: ${error.message}`,
-    });
+    console.error("Chat API error:", error);
+    res
+      .status(500)
+      .json({ reply: "There was a connection issue. Please try again later." });
   }
 }
