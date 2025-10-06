@@ -1,68 +1,23 @@
 export default async function handler(req, res) {
-  // Allow only POST requests
-  if (req.method !== "POST") {
-    return res.status(405).json({ reply: "Method not allowed" });
-  }
-
-  // CORS setup
-  res.setHeader("Access-Control-Allow-Origin", "*");
+  // ✅ Allow cross-origin requests from your website
+  res.setHeader("Access-Control-Allow-Origin", "https://www.littlejunkersllc.com");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  
+  // ✅ Handle preflight requests
   if (req.method === "OPTIONS") {
     return res.status(200).end();
   }
 
-  // Get body
-  let body;
-  try {
-    body = req.body || {};
-  } catch (err) {
-    return res.status(400).json({ reply: "Invalid request body." });
+  // ✅ Only allow POST requests
+  if (req.method !== "POST") {
+    return res.status(405).json({ reply: "Method not allowed" });
   }
 
-  const messages = body.messages || [];
-  const userMessage = messages.length
-    ? messages[messages.length - 1].content
-    : "Hello!";
-
-  // Define your Little Junkers links
-  const URL_11 = "https://www.littlejunkersllc.com/shop/the-little-junker-11-yard-dumpster-60";
-  const URL_16 = "https://www.littlejunkersllc.com/shop/the-mighty-middler-16-yard-dumpster-4";
-  const URL_21 = "https://www.littlejunkersllc.com/shop/the-big-junker-21-yard-dumpster-46";
-  const SHOP_URL = "https://www.littlejunkersllc.com/shop";
-  const FAQ_URL = "https://www.littlejunkersllc.com/faq";
-  const DOS_URL = "https://www.littlejunkersllc.com/do-s-don-ts";
-
-  // Create contextual prompt
-  const systemPrompt = `
-You are Randy Miller, a friendly Little Junkers representative. 
-You assist website visitors with dumpster rentals in Georgia.
-
-Tone: conversational, warm, concise. 
-NEVER browse the open web or invent information.
-Always rely on the details below:
-
-- Dumpster Sizes:
-   • 11-yard ("Little Junker") — great for small cleanouts.
-   • 16-yard ("Mighty Middler") — for mid-size remodels.
-   • 21-yard ("Big Junker") — for larger projects.
-- Pricing should always direct the user to check the live pages:
-   • 11-yard: ${URL_11}
-   • 16-yard: ${URL_16}
-   • 21-yard: ${URL_21}
-   • All sizes: ${SHOP_URL}
-- FAQ: ${FAQ_URL}
-- Do’s & Don’ts: ${DOS_URL}
-
-Your job is to:
-1. Help visitors choose a dumpster size.
-2. Ask for their name and phone number so the team can follow up.
-3. Encourage them to book online or call 470-548-4733.
-4. Avoid repeating greetings like "Hi there" too often.
-5. Keep answers short and helpful.
-`;
-
   try {
+    const body = req.body || {};
+    const messages = body.messages || [];
+
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -71,28 +26,25 @@ Your job is to:
       },
       body: JSON.stringify({
         model: "gpt-4o-mini",
-        messages: [
-          { role: "system", content: systemPrompt },
-          ...messages,
-          { role: "user", content: userMessage },
-        ],
-        temperature: 0.6,
+        messages,
+        temperature: 0.7,
       }),
     });
 
+    const data = await response.json();
+
     if (!response.ok) {
-      console.error("OpenAI API error:", await response.text());
-      return res.status(500).json({ reply: "Randy hit a snag—please try again in a moment!" });
+      console.error("OpenAI API error:", data);
+      return res.status(500).json({ reply: "OpenAI API error", error: data });
     }
 
-    const data = await response.json();
-    const botReply =
-      data.choices?.[0]?.message?.content ||
-      "Sorry, I'm having trouble responding right now.";
+    const reply =
+      data.choices?.[0]?.message?.content?.trim() ||
+      "Sorry, I didn’t catch that.";
 
-    res.status(200).json({ reply: botReply });
+    return res.status(200).json({ reply });
   } catch (err) {
     console.error("Server error:", err);
-    res.status(500).json({ reply: "There was a connection issue. Please try again." });
+    return res.status(500).json({ reply: "Server error", error: err.message });
   }
 }
