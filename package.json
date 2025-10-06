@@ -1,0 +1,9 @@
+{
+  "name": "gojunkers-chat",
+  "version": "1.0.0",
+  "main": "api/chat.js",
+  "type": "module",
+  "dependencies": {
+    "openai": "^4.55.0"
+  }
+}
