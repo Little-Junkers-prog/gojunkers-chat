@@ -1,9 +1,12 @@
 {
-  "version": 2,
-  "builds": [
-    { "src": "api/chat.js", "use": "@vercel/node" }
-  ],
-  "routes": [
-    { "src": "/api/(.*)", "dest": "/api/$1" }
-  ]
+  "name": "gojunkers-chat",
+  "version": "1.0.0",
+  "main": "api/chat.js",
+  "type": "module",
+  "scripts": {
+    "build": "echo 'Vercel Node API build - no frontend to compile'"
+  },
+  "dependencies": {
+    "openai": "^4.55.0"
+  }
 }
