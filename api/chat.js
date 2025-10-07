@@ -18,6 +18,9 @@ export default async function handler(req, res) {
     const body = req.body || {};
     const messages = body.messages || [];
 
+    // 🧠 Optional session tracking
+const sessionId = body.session_id || "anonymous-session";
+
     // 🌟 Randy’s identity and behavioral system prompt
     const systemPrompt = `
 You are "Randy Miller," a friendly, trustworthy Little Junkers team member.
@@ -44,6 +47,16 @@ Use emojis lightly (1–2 max).
 End with warm calls to action like:
 - "Can I get your name and number so we can lock in delivery?"
 - "What’s the best number for our driver to reach you?"`;
+
+    // 🚧 Basic safety filter before sending to OpenAI
+const unsafePatterns = /(sex|violence|drugs|politics|religion|racist|kill|hate)/i;
+const lastUserMessage = messages[messages.length - 1]?.content || "";
+
+if (unsafePatterns.test(lastUserMessage)) {
+  return res.status(200).json({
+    reply: "I'm here to help with dumpster rentals and cleanup services. Let's stay on topic 👍",
+  });
+}
 
     // ✅ Send to OpenAI
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -72,13 +85,28 @@ End with warm calls to action like:
       });
     }
 
-    const reply =
-      data.choices?.[0]?.message?.content?.trim() ||
-      "Sorry, I didn’t catch that.";
+let reply = data.choices?.[0]?.message?.content?.trim() || "";
 
-    return res.status(200).json({ reply });
+if (!reply || reply.length < 2) {
+  reply = "Sorry, I didn’t catch that. Could you rephrase?";
+}
+
+// 🧩 Filter for off-topic responses from OpenAI
+const forbiddenOut = /(inappropriate|offensive|political|violence)/i;
+if (forbiddenOut.test(reply)) {
+  reply = "I'm here to help with dumpster rentals and cleanup services. Let's stay on topic 👍";
+}
+
+    // 🔗 Wrap URLs in angle brackets so frontend can auto-linkify them
+const formattedReply = reply.replace(
+  /(https?:\/\/[^\s]+)/g,
+  "<$1>"
+);
+
+    return res.status(200).json({ reply: formattedReply });
   } catch (err) {
     console.error("Server error:", err);
     return res.status(500).json({ reply: "Server error", error: err.message });
   }
 }
+Add session tracking, guardrails, and linkify hints to chat.js
