@@ -1,9 +1,9 @@
 {
-  "functions": {
-    "api/**/*.js": {
-      "runtime": "@vercel/node@1.15.0"
-    }
-  },
+  "version": 2,
+  "outputDirectory": "api",
+  "builds": [
+    { "src": "api/chat/index.js", "use": "@vercel/node@1.15.0" }
+  ],
   "routes": [
     { "src": "/api/(.*)", "dest": "/api/$1" }
   ]
