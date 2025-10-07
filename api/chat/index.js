@@ -22,7 +22,7 @@ export default async function handler(req, res) {
     const allText = messages.map((m) => m.content).join(" ");
     const lastUserMessage = messages[messages.length - 1]?.content?.trim() || "";
 
-    // 🧩 Detect customer info (case-insensitive)
+    // 🧩 Detect customer info
     const nameRegex = /\b(?!yard|dumpster|atlanta|peachtree|fairburn|fayetteville|newnan|tyrone)([A-Z][a-z]+)\s([A-Z][a-z]+)\b/i;
     const phoneRegex = /(\d{3})[ -.]?(\d{3})[ -.]?(\d{4})/;
     const hasName = nameRegex.test(allText);
@@ -41,7 +41,8 @@ export default async function handler(req, res) {
     if (!hasName || !hasNumber) {
       if (!hasName && !hasNumber) {
         return res.status(200).json({
-          reply: "Hi there! 👋 I’m Randy with Little Junkers. Before we get started, could I get your *name* and *phone number* so we can keep you updated on delivery details?",
+          reply:
+            "Hi there! 👋 I’m Randy with Little Junkers. Before we get started, could I get your *name* and *phone number* so we can keep you updated on delivery details?",
         });
       } else if (!hasName) {
         return res.status(200).json({
@@ -54,13 +55,29 @@ export default async function handler(req, res) {
       }
     }
 
+    // ✅ Build context summary for OpenAI (persistent memory)
+    let contextSummary = "";
+    if (hasName && hasNumber) {
+      const nameMatch = allText.match(nameRegex);
+      const phoneMatch = allText.match(phoneRegex);
+      const nameValue = nameMatch ? nameMatch[0] : "Customer";
+      const phoneValue = phoneMatch ? phoneMatch[0] : "unknown";
+      contextSummary = `Customer name: ${nameValue}, phone: ${phoneValue}.`;
+    } else if (hasName) {
+      const nameMatch = allText.match(nameRegex);
+      contextSummary = `Customer name: ${nameMatch ? nameMatch[0] : "Customer"}.`;
+    } else if (hasNumber) {
+      const phoneMatch = allText.match(phoneRegex);
+      contextSummary = `Customer phone: ${phoneMatch ? phoneMatch[0] : "unknown"}.`;
+    }
+
     // 🧠 Intent detection
     const deliveryStatus = /(status|where|late|delivery|supposed to arrive|driver)/i;
     const orderIntent = /(deliver|bring|drop off|address|come|get it today|get it now|i'll pay)/i;
     const escalationIntent = /(manager|call|speak to someone|real person|phone|talk to a person)/i;
     const junkIntent = /(junk removal|pick up junk|remove furniture|haul stuff|come inside)/i;
 
-    // 🌟 Randy’s updated personality + system instructions
+    // 🌟 Randy’s personality + instructions
     const systemPrompt = `
 You are "Randy Miller," a friendly, trustworthy Little Junkers team member.  
 You help customers rent dumpsters, explain sizes, guide them through booking, and handle light service issues (like status or location questions).  
@@ -83,11 +100,11 @@ Always thank customers for providing their name or number and personalize replie
 - Do’s & Don’ts: https://www.littlejunkersllc.com/do-s-don-ts  
 
 If customers ask about:
-- 📦 Status: Apologize for delay, ask for name + number if missing, reassure follow-up.
-- ☎️ Manager or call: Tell them someone will follow up soon if they left their number.
-- 🗑️ Junk removal: Explain Little Junkers provides dumpster rentals (not in-home removal).
+- 📦 Status: Apologize for delay, ask for name + number if missing, reassure follow-up.  
+- ☎️ Manager or call: Tell them someone will follow up soon if they left their number.  
+- 🗑️ Junk removal: Explain Little Junkers provides dumpster rentals (not in-home removal).  
 
-Once both name and phone are provided, respond warmly and transition with something like:
+Once both name and phone are provided, respond warmly and transition with something like:  
 "Perfect, Marcus 👍 I’ve got your info saved — what kind of project are you working on today?"
 `;
 
@@ -95,7 +112,7 @@ Once both name and phone are provided, respond warmly and transition with someth
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -103,6 +120,7 @@ Once both name and phone are provided, respond warmly and transition with someth
         temperature: 0.7,
         messages: [
           { role: "system", content: systemPrompt },
+          { role: "system", content: contextSummary },
           ...messages,
         ],
       }),
