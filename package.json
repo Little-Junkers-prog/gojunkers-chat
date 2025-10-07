@@ -1,8 +1,10 @@
 {
   "name": "gojunkers-chat",
   "version": "1.0.0",
-  "main": "api/chat.js",
   "type": "module",
+  "scripts": {
+    "vercel-build": "echo 'API-only project — no build output'"
+  },
   "dependencies": {
     "openai": "^4.55.0"
   }
