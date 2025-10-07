@@ -1,9 +1,14 @@
 {
   "version": 2,
-  "builds": [
-    { "src": "api/chat/index.js", "use": "@vercel/node@1.15.0" }
-  ],
+  "functions": {
+    "api/chat/index.js": {
+      "runtime": "@vercel/node@1.15.0"
+    }
+  },
   "routes": [
-    { "src": "/api/chat", "dest": "api/chat/index.js" }
+    {
+      "src": "/api/chat/?(.*)",
+      "dest": "api/chat/index.js"
+    }
   ]
 }
