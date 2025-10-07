@@ -15,11 +15,11 @@ export default async function handler(req, res) {
     const messages = body.messages || [];
 
     // 🧠 Gather all user text for persistent context
-    const allText = messages.map((m) => m.content).join(" ").toLowerCase();
+    const allText = messages.map((m) => m.content).join(" ");
     const lastUserMessage = messages[messages.length - 1]?.content?.trim() || "";
 
-    // 🧩 Persistent detection of user details
-    const hasName = /\b([A-Z][a-z]+)\s([A-Z][a-z]+)\b/.test(allText);
+    // 🧩 Persistent detection of user details (case-insensitive)
+    const hasName = /\b([A-Z][a-z]+)\s([A-Z][a-z]+)\b/i.test(allText);
     const hasNumber = /(\d{3})[ -.]?(\d{3})[ -.]?(\d{4})/.test(allText);
     const hasCity = /(atlanta|peachtree|fayetteville|fairburn|newnan|tyrone)/i.test(allText);
 
@@ -36,6 +36,7 @@ export default async function handler(req, res) {
     const orderIntent = /(deliver|bring|drop off|address|come|get it today|get it now|i'll pay)/i;
     const escalationIntent = /(manager|call|speak to someone|real person|phone|talk to a person)/i;
     const junkIntent = /(junk removal|pick up junk|remove furniture|haul stuff|come inside)/i;
+
 
     // 🚚 Delivery issue
     if (deliveryStatus.test(lastUserMessage)) {
