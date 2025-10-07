@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "build": "echo 'building Node API'"
+    "vercel-build": "echo 'API-only project — no build output'"
   },
   "dependencies": {
     "openai": "^4.55.0"
