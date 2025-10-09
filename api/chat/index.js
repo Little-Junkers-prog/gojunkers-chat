@@ -22,37 +22,54 @@ export default async function handler(req, res) {
     const allText = messages.map((m) => m.content).join(" ");
     const lastUserMessage = messages[messages.length - 1]?.content?.trim() || "";
 
-    // 🧩 Detect customer info
+    // 🧩 Detect customer info (case-insensitive)
     const nameRegex = /\b(?!yard|dumpster|atlanta|peachtree|fairburn|fayetteville|newnan|tyrone)([A-Z][a-z]+)\s([A-Z][a-z]+)\b/i;
     const phoneRegex = /(\d{3})[ -.]?(\d{3})[ -.]?(\d{4})/;
-    const hasName = nameRegex.test(allText);
-    const hasNumber = phoneRegex.test(allText);
+    let hasName = nameRegex.test(allText);
+    let hasNumber = phoneRegex.test(allText);
     const hasCity = /(atlanta|peachtree|fayetteville|fairburn|newnan|tyrone)/i.test(allText);
 
     // 🛡️ Safety guardrail
     const unsafePatterns = /(sex|violence|drugs|politics|religion|racist|kill|hate|suicide)/i;
     if (unsafePatterns.test(lastUserMessage)) {
       return res.status(200).json({
-        reply: "I'm here to help with dumpster rentals and cleanup services. Let's stay on topic 👍",
+        reply:
+          "I'm here to help with dumpster rentals and cleanup services. Let's stay on topic 👍",
       });
     }
 
-    // 💬 Early lead capture handling
+    // 💬 Early lead-capture logic (combined handling)
     if (!hasName || !hasNumber) {
+      // If neither provided yet
       if (!hasName && !hasNumber) {
         return res.status(200).json({
           reply:
             "Hi there! 👋 I’m Randy with Little Junkers. Before we get started, could I get your *name* and *phone number* so we can keep you updated on delivery details?",
         });
-      } else if (!hasName) {
+      }
+
+      // If only one provided in the entire conversation, prompt for the missing one
+      if (hasName && !hasNumber) {
         return res.status(200).json({
-          reply: "Thanks! Got your number 👍 What’s your name so we can confirm delivery?",
-        });
-      } else if (!hasNumber) {
-        return res.status(200).json({
-          reply: "Thanks, got your name 👍 What’s the best number for our driver to reach you?",
+          reply:
+            "Thanks, got your name 👍 What’s the best number for our driver to reach you?",
         });
       }
+
+      if (!hasName && hasNumber) {
+        return res.status(200).json({
+          reply:
+            "Thanks! Got your number 👍 What’s your name so we can confirm delivery?",
+        });
+      }
+    }
+
+    // ✅ Once both provided, acknowledge ONCE then move forward
+    if (hasName && hasNumber && /name|number/i.test(lastUserMessage)) {
+      return res.status(200).json({
+        reply:
+          "Perfect 👍 I’ve got your info saved — what kind of project are you working on today?",
+      });
     }
 
     // ✅ Build context summary for OpenAI (persistent memory)
@@ -61,98 +78,4 @@ export default async function handler(req, res) {
       const nameMatch = allText.match(nameRegex);
       const phoneMatch = allText.match(phoneRegex);
       const nameValue = nameMatch ? nameMatch[0] : "Customer";
-      const phoneValue = phoneMatch ? phoneMatch[0] : "unknown";
-      contextSummary = `Customer name: ${nameValue}, phone: ${phoneValue}.`;
-    } else if (hasName) {
-      const nameMatch = allText.match(nameRegex);
-      contextSummary = `Customer name: ${nameMatch ? nameMatch[0] : "Customer"}.`;
-    } else if (hasNumber) {
-      const phoneMatch = allText.match(phoneRegex);
-      contextSummary = `Customer phone: ${phoneMatch ? phoneMatch[0] : "unknown"}.`;
-    }
-
-    // 🧠 Intent detection
-    const deliveryStatus = /(status|where|late|delivery|supposed to arrive|driver)/i;
-    const orderIntent = /(deliver|bring|drop off|address|come|get it today|get it now|i'll pay)/i;
-    const escalationIntent = /(manager|call|speak to someone|real person|phone|talk to a person)/i;
-    const junkIntent = /(junk removal|pick up junk|remove furniture|haul stuff|come inside)/i;
-
-    // 🌟 Randy’s personality + instructions
-    const systemPrompt = `
-You are "Randy Miller," a friendly, trustworthy Little Junkers team member.  
-You help customers rent dumpsters, explain sizes, guide them through booking, and handle light service issues (like status or location questions).  
-Keep your tone casual, confident, and approachable — like a helpful neighbor.  
-Always thank customers for providing their name or number and personalize replies once you have them.  
-
-✅ Rules:
-- Never repeat the greeting more than once.
-- Never ask again for info the customer already gave.
-- Do NOT make up prices — only use the official links below.
-- Keep replies under 100 words unless explaining sizes or policies.
-- Use at most 1–2 emojis per message.
-- Never discuss politics, religion, or personal topics.
-
-🔗 Reference links:
-- 11-yard: https://www.littlejunkersllc.com/shop/the-little-junker-11-yard-dumpster-60  
-- 16-yard: https://www.littlejunkersllc.com/shop/the-mighty-middler-16-yard-dumpster-4  
-- 21-yard: https://www.littlejunkersllc.com/shop/the-big-junker-21-yard-dumpster-46  
-- FAQs: https://www.littlejunkersllc.com/faq  
-- Do’s & Don’ts: https://www.littlejunkersllc.com/do-s-don-ts  
-
-If customers ask about:
-- 📦 Status: Apologize for delay, ask for name + number if missing, reassure follow-up.  
-- ☎️ Manager or call: Tell them someone will follow up soon if they left their number.  
-- 🗑️ Junk removal: Explain Little Junkers provides dumpster rentals (not in-home removal).  
-
-Once both name and phone are provided, respond warmly and transition with something like:  
-"Perfect, Marcus 👍 I’ve got your info saved — what kind of project are you working on today?"
-`;
-
-    // ✅ Send to OpenAI
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        temperature: 0.7,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "system", content: contextSummary },
-          ...messages,
-        ],
-      }),
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      console.error("OpenAI API error:", data);
-      return res.status(500).json({
-        reply: "OpenAI API error",
-        error: data,
-      });
-    }
-
-    let reply = data.choices?.[0]?.message?.content?.trim() || "";
-    if (!reply || reply.length < 2) {
-      reply = "Sorry, I didn’t catch that. Could you rephrase?";
-    }
-
-    // 🧩 Filter off-topic or inappropriate replies
-    const forbiddenOut = /(inappropriate|offensive|political|violence)/i;
-    if (forbiddenOut.test(reply)) {
-      reply = "I'm here to help with dumpster rentals and cleanup services. Let's stay on topic 👍";
-    }
-
-    // 🔗 Wrap URLs in angle brackets for clickable links
-    const formattedReply = reply.replace(/(https?:\/\/[^\s]+)/g, "<$1>");
-
-    return res.status(200).json({ reply: formattedReply });
-  } catch (err) {
-    console.error("Server error:", err);
-    return res.status(500).json({ reply: "Server error", error: err.message });
-  }
-}
+      c
