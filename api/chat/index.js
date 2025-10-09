@@ -10,10 +10,15 @@ export default async function handler(req, res) {
     const body = req.body || {};
     const messages = body.messages || [];
 
-    const allText = messages.map((m) => m.content).join(" ");
+    // FIXED: Only check USER messages for name and phone number
+    const allText = messages
+      .filter(m => m.role === "user")
+      .map((m) => m.content)
+      .join(" ");
+    
     const lastUserMessage = messages[messages.length - 1]?.content?.trim() || "";
 
-    // Regex match
+    // Regex match - made more flexible for name matching
     const nameRegex = /\b(?!yard|dumpster|atlanta|peachtree|fairburn|fayetteville|newnan|tyrone)([A-Z][a-z]+)\s([A-Z][a-z]+)\b/i;
     const phoneRegex = /(\d{3})[ -.]?(\d{3})[ -.]?(\d{4})/;
     const hasName = nameRegex.test(allText);
@@ -32,28 +37,28 @@ export default async function handler(req, res) {
       if (!hasName && !hasNumber) {
         return res.status(200).json({
           reply:
-            "Hi there! 👋 I’m Randy with Little Junkers. Before we get started, could I get your *name* and *phone number* so we can keep you updated on delivery details?",
+            "Hi there! 👋 I'm Randy with Little Junkers. Before we get started, could I get your *name* and *phone number* so we can keep you updated on delivery details?",
         });
       }
       if (hasName && !hasNumber) {
         return res.status(200).json({
-          reply: "Thanks, got your name 👍 What’s the best number for our driver to reach you?",
+          reply: "Thanks, got your name 👍 What's the best number for our driver to reach you?",
         });
       }
       if (!hasName && hasNumber) {
         return res.status(200).json({
-          reply: "Thanks! Got your number 👍 What’s your name so we can confirm delivery?",
+          reply: "Thanks! Got your number 👍 What's your name so we can confirm delivery?",
         });
       }
     }
 
     if (leadCaptured && /name|number/i.test(lastUserMessage)) {
       return res.status(200).json({
-        reply: "Perfect 👍 I’ve got your info saved — what kind of project are you working on today?",
+        reply: "Perfect 👍 I've got your info saved — what kind of project are you working on today?",
       });
     }
 
-    // Randy’s system prompt
+    // Randy's system prompt
     const systemPrompt = `
 You are "Randy Miller," a friendly, trustworthy Little Junkers team member.  
 You help customers rent dumpsters, explain sizes, guide them through booking, and answer service-related questions.  
@@ -71,7 +76,7 @@ Always thank customers for their info and personalize replies once name and numb
 - 16-yard: https://www.littlejunkersllc.com/shop/the-mighty-middler-16-yard-dumpster-4  
 - 21-yard: https://www.littlejunkersllc.com/shop/the-big-junker-21-yard-dumpster-46  
 - FAQ: https://www.littlejunkersllc.com/faq  
-- Do’s & Don’ts: https://www.littlejunkersllc.com/do-s-don-ts  
+- Do's & Don'ts: https://www.littlejunkersllc.com/do-s-don-ts  
 `;
 
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -98,7 +103,7 @@ Always thank customers for their info and personalize replies once name and numb
     }
 
     let reply = data.choices?.[0]?.message?.content?.trim() || "";
-    if (!reply) reply = "Sorry, I didn’t catch that. Could you rephrase?";
+    if (!reply) reply = "Sorry, I didn't catch that. Could you rephrase?";
 
     const forbiddenOut = /(inappropriate|offensive|political|violence)/i;
     if (forbiddenOut.test(reply)) {
