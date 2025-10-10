@@ -195,7 +195,8 @@ async function sendLeadEmail(name, phone, messages, recommendedDumpster) {
 
     if (!resendResponse.ok) {
       const errorData = await resendResponse.json();
-      console.error("Resend API error:", errorData);
+     console.error("Resend API error:", errorData);
+      throw new Error(`Resend API failed: ${JSON.stringify(errorData)}`);
     } else {
       console.log("Lead email sent successfully");
     }
@@ -243,6 +244,7 @@ async function sendEscalationEmail(name, phone, issue, messages) {
     if (!resendResponse.ok) {
       const errorData = await resendResponse.json();
       console.error("Resend API error:", errorData);
+      throw new Error(`Resend API failed: ${JSON.stringify(errorData)}`);
     } else {
       console.log("Escalation email sent successfully");
     }
