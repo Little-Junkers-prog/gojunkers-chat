@@ -10,15 +10,22 @@ export default async function handler(req, res) {
     const body = req.body || {};
     const messages = body.messages || [];
 
-    // Only check USER messages for name and phone number
-    const allText = messages
-      .filter(m => m.role === "user")
-      .map((m) => m.content)
-      .join(" ");
-    
+    // 🛡️ Input size control - prevent token overflow and cost explosion
+    const MAX_MESSAGES = 50; // ~25 exchanges, more than enough for a booking conversation
+    if (messages.length > MAX_MESSAGES) {
+      // Keep system messages and recent conversation
+      const systemMessages = messages.filter(m => m.role === "system");
+      const recentMessages = messages.filter(m => m.role !== "system").slice(-30);
+      messages.length = 0;
+      messages.push(...systemMessages, ...recentMessages);
+      console.log(`⚠️ Message history trimmed to prevent overflow`);
+    }
+
+    // Combine all user text
+    const allText = messages.filter(m => m.role === "user").map(m => m.content).join(" ");
     const lastUserMessage = messages[messages.length - 1]?.content?.trim() || "";
 
-    // 🔹 FIRST: Check for unsafe content BEFORE anything else
+    // 🛑 Profanity & off-topic filter FIRST
     const unsafePatterns = /(sex|violence|drugs|politics|religion|racist|kill|hate|suicide|stupid|dumb|idiot|fuck|shit|ass|bitch|damn)/i;
     if (unsafePatterns.test(lastUserMessage)) {
       return res.status(200).json({
@@ -26,72 +33,100 @@ export default async function handler(req, res) {
       });
     }
 
-    // Regex match - accepts first name only OR full name
+    // 🧠 Regex detection
     const nameRegex = /\b(?!yard|dumpster|atlanta|peachtree|fairburn|fayetteville|newnan|tyrone|need|want|help|rental|rent|delivery|hi|hey|hello|thanks|thank|yes|no|ok|okay)([A-Z][a-z]{1,})\b/i;
     const phoneRegex = /(\d{3})[ -.]?(\d{3})[ -.]?(\d{4})/;
+    const emailRegex = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
+    const addressRegex = /\d{1,5}\s[A-Za-z0-9\s,.#-]+(Street|St|Avenue|Ave|Road|Rd|Lane|Ln|Drive|Dr|Court|Ct|Trail|Way|Blvd|Boulevard|Place|Pl|Parkway|Pkwy)\b/i;
+
     const hasName = nameRegex.test(allText);
     const hasNumber = phoneRegex.test(allText);
-    const leadCaptured = hasName && hasNumber;
+    const hasEmail = emailRegex.test(allText);
+    const hasAddress = addressRegex.test(allText);
+    const hasMinimumInfo = hasName && (hasNumber || hasEmail);
 
-    // Check for escalation signals
-    const escalationPatterns = /(speak.*human|talk.*person|manager|supervisor|can't help|not helping|frustrated|angry|this is ridiculous|unacceptable|terrible service)/i;
+    // Extract actual values
+    const nameMatch = allText.match(nameRegex);
+    const phoneMatch = allText.match(phoneRegex);
+    const emailMatch = allText.match(emailRegex);
+    const addressMatch = allText.match(addressRegex);
+
+    // Track if lead email was already sent (to prevent duplicates)
+    const leadEmailSent = messages.some(m => 
+      m.role === "assistant" && /got everything I need|we'll confirm|thanks for choosing little junkers/i.test(m.content)
+    );
+    
+    // Detect end of conversation signals
+    const endOfChatSignals = /^(thanks|thank you|bye|goodbye|ok|okay|perfect|sounds good|great|got it|that's all|all set)$/i;
+    const isEndingChat = endOfChatSignals.test(lastUserMessage.trim()) && hasMinimumInfo;
+
+    // Track how many times Randy asked for contact info (prevent loops)
+    const askedForContactCount = messages.filter(m =>
+      m.role === "assistant" && /what.s your (name|phone|number|email|contact)/i.test(m.content)
+    ).length;
+
+    // 🚨 Escalation check
+    const escalationPatterns = /(speak.*human|talk.*person|manager|supervisor|can't help|not helping|frustrated|angry|ridiculous|unacceptable|terrible service)/i;
     if (escalationPatterns.test(lastUserMessage) && hasNumber) {
-      const phoneMatch = allText.match(phoneRegex);
-      const phoneNumber = phoneMatch ? `${phoneMatch[1]}-${phoneMatch[2]}-${phoneMatch[3]}` : "the number you provided";
-      const nameMatch = allText.match(nameRegex);
-      const customerName = nameMatch ? nameMatch[0] : "Customer";
-      
-      // Send escalation email
-      await sendEscalationEmail(customerName, phoneNumber, lastUserMessage, messages);
-      
+      await sendEscalationEmail(
+        nameMatch?.[0] || "Customer",
+        formatPhone(phoneMatch),
+        lastUserMessage,
+        messages
+      );
       return res.status(200).json({
-        reply: `I completely understand — let me have one of our team members give you a call at ${phoneNumber}. They'll be able to help you better. Someone will reach out within the next few hours during business hours. Thanks for your patience! 👍`,
+        reply: `I completely understand — let me have one of our team members give you a call at ${formatPhone(phoneMatch)}. They'll be able to help you better. Someone will reach out within the next few hours during business hours. Thanks for your patience! 👍`,
       });
     }
 
-    // Randy's system prompt with HELP-FIRST approach
+    // 🧭 System prompt for Randy
     const systemPrompt = `
-You are "Randy Miller," a friendly, helpful Little Junkers team member.  
-Your PRIMARY GOAL is to help customers find the right dumpster and guide them to book it.
+You are "Randy Miller," the friendly, helpful assistant for Little Junkers — a local dumpster rental service.
+Tone: warm, professional, conversational, like a small business team member.
 
-🎯 CONVERSATION STRATEGY - HELP FIRST, CAPTURE LATER:
-- Start by understanding their PROJECT (what are they working on?)
-- Ask about debris type and project scope
-- Recommend the right dumpster size with reasoning
-- Provide the booking link
-- ONLY ask for contact info when they show buying intent OR after you've recommended a dumpster
-- Natural phrases to capture info: "Want me to get this scheduled? I'll just need your name and phone number"
+🎯 Your mission:
+- Help the customer choose the right dumpster based on their project
+- Provide booking links wrapped in < > brackets
+- Naturally ask for their first name and either phone OR email (not both unless they volunteer it)
+- If they decline contact info after being asked twice, politely redirect to the booking page and stop asking
 
-✅ Rules:
-- Never repeat the greeting
-- Be genuinely helpful, not pushy
-- Keep tone casual, confident, and friendly
-- Use up to 2 emojis max
-- Never discuss politics, religion, or unrelated topics
-- CRITICAL: When providing links, ALWAYS wrap them in angle brackets like this: <https://example.com>
-- NEVER use markdown link format [text](url) or parentheses around links
-- NEVER add periods or punctuation immediately after a link
+✅ Conversation Flow:
+1. Greet warmly and ask about their project
+2. Understand debris type and project scope
+3. Recommend the right dumpster size with the booking link
+4. Naturally transition to: "Want me to help you get this scheduled? I'll just need your first name and phone number (or email)"
+5. Once you have name + (phone OR email), answer any remaining questions they have
+6. When they signal they're done (say "thanks", "bye", "okay", "perfect", etc.), thank them and let them know someone will follow up
 
-🔗 CORRECT Booking Links (ALWAYS wrap in < > brackets):
-- 11-yard "Little Junker": <https://www.littlejunkersllc.com/shop/the-little-junker-11-yard-dumpster-60>
-- 16-yard "Mighty Middler": <https://www.littlejunkersllc.com/shop/the-mighty-middler-16-yard-dumpster-4>
-- 21-yard "Big Junker": <https://www.littlejunkersllc.com/shop/the-big-junker-21-yard-dumpster-46>
-- All Dumpsters: <https://www.littlejunkersllc.com/shop>
+If a customer refuses contact info twice, respond:
+  "No problem — I completely understand! You can book directly here anytime: <https://www.littlejunkersllc.com/shop> 👍"
+Then DO NOT ask again.
+
+🏗️ Dumpster Info:
+- 11-yard "Little Junker" ($225/2 days): small cleanouts, garages, yard cleanup <https://www.littlejunkersllc.com/shop/the-little-junker-11-yard-dumpster-60>
+- 16-yard "Mighty Middler" ($275/2 days): kitchen/basement remodels, medium projects <https://www.littlejunkersllc.com/shop/the-mighty-middler-16-yard-dumpster-4>
+- 21-yard "Big Junker" ($325/2 days): large renovations, roofing, construction <https://www.littlejunkersllc.com/shop/the-big-junker-21-yard-dumpster-46>
 - FAQ: <https://www.littlejunkersllc.com/faq>
 - Do's & Don'ts: <https://www.littlejunkersllc.com/do-s-don-ts>
 
-📏 Dumpster Sizing Guide:
-- 11-yard "Little Junker" ($225/2 days): Small cleanouts, garage cleanouts, minor renovations, yard waste (10% larger than competitors' 10-yard)
-- 16-yard "Mighty Middler" ($275/2 days): Medium projects, basement cleanouts, kitchen remodels, mid-sized construction
-- 21-yard "Big Junker" ($325/2 days): Large renovations, roofing projects, major cleanouts, construction debris
+CRITICAL FORMATTING RULES:
+- ALWAYS wrap all URLs in < > brackets like this: <https://example.com>
+- NEVER use markdown format [text](url)
+- NEVER add punctuation immediately after a URL
+- Keep messages under 100 words
+- Use max 2 emojis per message`;
 
-🎪 When to Ask for Contact Info:
-- After recommending a dumpster and providing the link
-- When customer says "I want to book" or "I'm ready"
-- When customer asks "what's next" or "how do I proceed"
-- Natural transition: "Great! I can help you get this scheduled. What's your name and best phone number?"
-`;
+    // Anti-loop safeguard
+    const antiLoopPrompt =
+      askedForContactCount >= 2
+        ? {
+            role: "system",
+            content:
+              "You have already asked for contact information twice. DO NOT ask again. Politely redirect to the booking page: <https://www.littlejunkersllc.com/shop>",
+          }
+        : null;
 
+    // 💬 OpenAI call
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -103,7 +138,7 @@ Your PRIMARY GOAL is to help customers find the right dumpster and guide them to
         temperature: 0.7,
         messages: [
           { role: "system", content: systemPrompt },
-          { role: "system", content: `Conversation so far: ${allText}` },
+          ...(antiLoopPrompt ? [antiLoopPrompt] : []),
           ...messages,
         ],
       }),
@@ -115,76 +150,83 @@ Your PRIMARY GOAL is to help customers find the right dumpster and guide them to
       return res.status(500).json({ reply: "OpenAI API error" });
     }
 
-    let reply = data.choices?.[0]?.message?.content?.trim() || "";
-    if (!reply) reply = "Sorry, I didn't catch that. Could you rephrase?";
+    let reply = data.choices?.[0]?.message?.content?.trim() || "Sorry, I didn't catch that.";
 
-    const forbiddenOut = /(inappropriate|offensive|political|violence)/i;
-    if (forbiddenOut.test(reply)) {
-      reply = "I'm here to help with dumpster rentals and cleanup services. Let's stay on topic 👍";
-    }
+    // 🔹 CRITICAL: Ensure URLs are wrapped in < > for frontend parsing
+    reply = reply.replace(/(https?:\/\/[^\s<>]+)/g, "<$1>");
 
-    // Check if lead was JUST captured (user provided both name and phone in this message or recently)
-    const justCapturedLead = leadCaptured && messages.length >= 2;
-    if (justCapturedLead) {
-      // Check if we already sent email for this lead (look for previous bot messages mentioning scheduling)
-      const alreadySentEmail = messages.some(m => 
-        m.role === "assistant" && /scheduled|booked|confirmation/i.test(m.content)
+    // ✅ Send lead email ONLY when conversation is ending and minimum info captured
+    if (hasMinimumInfo && !leadEmailSent && isEndingChat) {
+      console.log("📧 Lead capture triggered:", {
+        name: nameMatch?.[0] || "Unknown",
+        phone: formatPhone(phoneMatch),
+        email: emailMatch?.[0] || "Not provided"
+      });
+      
+      const emailSent = await sendLeadEmail(
+        nameMatch?.[0] || "Unknown",
+        formatPhone(phoneMatch),
+        emailMatch?.[0] || "Not provided",
+        addressMatch?.[0] || "Not provided",
+        messages,
+        reply
       );
       
-      if (!alreadySentEmail) {
-        const phoneMatch = allText.match(phoneRegex);
-        const phoneNumber = phoneMatch ? `${phoneMatch[1]}-${phoneMatch[2]}-${phoneMatch[3]}` : "Unknown";
-        const nameMatch = allText.match(nameRegex);
-        const customerName = nameMatch ? nameMatch[0] : "Unknown";
-        
-        // Send lead capture email
-        await sendLeadEmail(customerName, phoneNumber, messages, reply);
+      // Add confirmation message that signals email was sent
+      if (emailSent) {
+        reply = "Perfect! 👍 I've got everything I need. Someone from our team will reach out shortly to confirm your dumpster delivery. Thanks for choosing Little Junkers!";
+      } else {
+        reply = "Thanks! I've saved your info, though we're having a small technical hiccup on our end. No worries — someone from our team will still reach out to you shortly! 👍";
       }
     }
 
-    const formattedReply = reply.replace(/(https?:\/\/[^\s]+)/g, "<$1>");
-    return res.status(200).json({ reply: formattedReply });
+    return res.status(200).json({ reply });
   } catch (err) {
     console.error("Server error:", err);
     return res.status(500).json({ reply: "Server error", error: err.message });
   }
 }
 
-// 📧 Send Lead Capture Email
-async function sendLeadEmail(name, phone, messages, recommendedDumpster) {
+// 📧 Lead email
+async function sendLeadEmail(name, phone, email, address, messages, lastReply) {
   try {
-    const conversationHistory = messages
+    const history = messages
       .map(m => `${m.role === "user" ? "Customer" : "Randy"}: ${m.content}`)
       .join("\n\n");
-
-    // Extract recommended dumpster from conversation
-    let dumpsterRec = "Not yet determined";
-    if (/11.yard|little junker/i.test(recommendedDumpster)) {
-      dumpsterRec = "11-yard Little Junker";
-    } else if (/16.yard|mighty middler/i.test(recommendedDumpster)) {
-      dumpsterRec = "16-yard Mighty Middler";
-    } else if (/21.yard|big junker/i.test(recommendedDumpster)) {
-      dumpsterRec = "21-yard Big Junker";
+    
+    const displayName = name.split(" ")[0] || "Customer";
+    
+    // Determine recommended dumpster from conversation
+    let recommendedDumpster = "Not yet determined";
+    const conversationText = history.toLowerCase();
+    if (conversationText.includes("11") || conversationText.includes("little junker")) {
+      recommendedDumpster = "11-yard Little Junker";
+    } else if (conversationText.includes("16") || conversationText.includes("mighty middler")) {
+      recommendedDumpster = "16-yard Mighty Middler";
+    } else if (conversationText.includes("21") || conversationText.includes("big junker")) {
+      recommendedDumpster = "21-yard Big Junker";
     }
 
     const emailBody = {
       from: process.env.EMAIL_FROM || "noreply@littlejunkersllc.com",
       to: process.env.EMAIL_TO || "customer_service@littlejunkersllc.com",
-      subject: `🎯 New Lead: ${name} - ${phone}`,
+      subject: `🎯 New Lead: ${displayName} - ${phone}`,
       html: `
         <h2>New Lead Captured from Randy Chat 🎉</h2>
-        <p><strong>Name:</strong> ${name}</p>
+        <p><strong>Name:</strong> ${displayName}</p>
         <p><strong>Phone:</strong> ${phone}</p>
-        <p><strong>Recommended:</strong> ${dumpsterRec}</p>
+        <p><strong>Email:</strong> ${email}</p>
+        <p><strong>Address:</strong> ${address}</p>
+        <p><strong>Recommended Dumpster:</strong> ${recommendedDumpster}</p>
         <hr>
         <h3>Full Conversation:</h3>
-        <pre style="background: #f5f5f5; padding: 15px; border-radius: 5px; white-space: pre-wrap;">${conversationHistory}</pre>
+        <pre style="background:#f5f5f5;padding:15px;border-radius:5px;white-space:pre-wrap;">${history}</pre>
         <hr>
-        <p style="color: #666; font-size: 12px;">This lead was automatically captured by Randy, your Little Junkers chatbot.</p>
-      `
+        <p style="color:#666;font-size:12px;">Lead automatically captured by Randy, your Little Junkers chatbot.</p>
+      `,
     };
 
-    const resendResponse = await fetch("https://api.resend.com/emails", {
+    const r = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
@@ -192,32 +234,34 @@ async function sendLeadEmail(name, phone, messages, recommendedDumpster) {
       },
       body: JSON.stringify(emailBody),
     });
-
-    if (!resendResponse.ok) {
-      const errorData = await resendResponse.json();
-     console.error("Resend API error:", errorData);
-      throw new Error(`Resend API failed: ${JSON.stringify(errorData)}`);
+    
+    if (!r.ok) {
+      const errorData = await r.json();
+      console.error("❌ Resend error:", errorData);
+      return false; // Signal failure
     } else {
-      console.log("Lead email sent successfully");
+      console.log("✅ Lead email sent successfully");
+      return true; // Signal success
     }
   } catch (err) {
-    console.error("Error sending lead email:", err);
+    console.error("❌ Error sending lead email:", err);
+    return false; // Signal failure
   }
 }
 
-// 🚨 Send Escalation Alert Email
+// 🚨 Escalation email
 async function sendEscalationEmail(name, phone, issue, messages) {
   try {
-    const conversationHistory = messages
+    const history = messages
       .map(m => `${m.role === "user" ? "Customer" : "Randy"}: ${m.content}`)
       .join("\n\n");
-
+    
     const emailBody = {
       from: process.env.EMAIL_FROM || "noreply@littlejunkersllc.com",
       to: process.env.EMAIL_TO || "customer_service@littlejunkersllc.com",
       subject: `🚨 ESCALATION: ${name} needs callback - ${phone}`,
       html: `
-        <h2 style="color: #d9534f;">🚨 Customer Escalation Alert</h2>
+        <h2 style="color:#d9534f;">🚨 Customer Escalation Alert</h2>
         <p><strong>Name:</strong> ${name}</p>
         <p><strong>Phone:</strong> ${phone}</p>
         <p><strong>Issue:</strong> ${issue}</p>
@@ -226,13 +270,13 @@ async function sendEscalationEmail(name, phone, issue, messages) {
         </p>
         <hr>
         <h3>Full Conversation:</h3>
-        <pre style="background: #f5f5f5; padding: 15px; border-radius: 5px; white-space: pre-wrap;">${conversationHistory}</pre>
+        <pre style="background:#f5f5f5;padding:15px;border-radius:5px;white-space:pre-wrap;">${history}</pre>
         <hr>
-        <p style="color: #666; font-size: 12px;">This escalation was automatically detected by Randy, your Little Junkers chatbot.</p>
-      `
+        <p style="color:#666;font-size:12px;">Escalation automatically detected by Randy, your Little Junkers chatbot.</p>
+      `,
     };
 
-    const resendResponse = await fetch("https://api.resend.com/emails", {
+    const r = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
@@ -240,15 +284,20 @@ async function sendEscalationEmail(name, phone, issue, messages) {
       },
       body: JSON.stringify(emailBody),
     });
-
-    if (!resendResponse.ok) {
-      const errorData = await resendResponse.json();
-      console.error("Resend API error:", errorData);
-      throw new Error(`Resend API failed: ${JSON.stringify(errorData)}`);
+    
+    if (!r.ok) {
+      const errorData = await r.json();
+      console.error("Resend escalation error:", errorData);
     } else {
-      console.log("Escalation email sent successfully");
+      console.log("🚨 Escalation email sent successfully");
     }
   } catch (err) {
     console.error("Error sending escalation email:", err);
   }
+}
+
+// Helper function to format phone numbers
+function formatPhone(match) {
+  if (!match) return "Not provided";
+  return `${match[1]}-${match[2]}-${match[3]}`;
 }
