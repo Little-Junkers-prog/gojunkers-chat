@@ -176,7 +176,7 @@ export default async function handler(req, res) {
 
     // Empathy cue for bereavement
     const hasBereavementCue =
-      /(my (dad|mom|father|mother|grand(ma|pa|mother|father)|parent|spouse|wife|husband)) (just )?(passed|died)|lost my (dad|mom|father|mother|grand(ma|pa|mother|father)|parent|spouse)|bereavement|estate cleanout|death in (the )?family)/i.test(
+      /(my (dad|mom|father|mother|grandma|grandpa|grandmother|grandfather|parent|spouse|wife|husband)) (just )?(passed|died)|lost my (dad|mom|father|mother|grandma|grandpa|grandmother|grandfather|parent|spouse)|bereavement|estate cleanout|death in (the )?family/i.test(
         lastUserMessage
       );
 
