@@ -1,11 +1,31 @@
 export default async function handler(req, res) {
-  // CORS for your website
-  res.setHeader("Access-Control-Allow-Origin", "https://www.littlejunkersllc.com");
+  // Get the origin from the request
+  const origin = req.headers.origin;
+  
+  // Allow requests from your domain (both www and non-www)
+  const allowedOrigins = [
+    "https://www.littlejunkersllc.com",
+    "https://littlejunkersllc.com",
+    "http://www.littlejunkersllc.com",
+    "http://littlejunkersllc.com"
+  ];
+  
+  if (allowedOrigins.includes(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+  }
+  
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Max-Age", "86400");
 
-  if (req.method === "OPTIONS") return res.status(200).end();
-  if (req.method !== "POST") return res.status(405).json({ reply: "Method not allowed" });
+  // Handle OPTIONS preflight request
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
+  
+  if (req.method !== "POST") {
+    return res.status(405).json({ reply: "Method not allowed" });
+  }
 
   try {
     const body = req.body || {};
