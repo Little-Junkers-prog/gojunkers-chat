@@ -100,7 +100,9 @@ export default async function handler(req, res) {
     const hasName = !!(nameToUse && nameToUse.trim());
     const hasNumber = phoneRegex.test(allUserText);
     const hasEmail = emailRegex.test(allUserText);
-    const hasAddress = addressRegex.test(allUserText);
+    const addressMatches = Array.from(allUserText.matchAll(addressRegex)).map((m) => m[1] || m[0]);
+    const addressMatch = addressMatches.length > 0 ? addressMatches[addressMatches.length - 1] : null;
+    const hasAddress = !!addressMatch;
     const hasMinimumInfo = hasName && (hasNumber || hasEmail);
 
     const nameMatch = hasName ? [nameToUse] : null;
