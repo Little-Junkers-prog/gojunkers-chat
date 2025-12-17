@@ -1,6 +1,3 @@
-// api/chat/index.js
-// Vercel Serverless Function (ESM) — paste-ready.
-
 export default async function handler(req, res) {
   // ---------- CORS ----------
   const origin = req.headers.origin;
