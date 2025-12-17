@@ -55,73 +55,15 @@ export default async function handler(req, res) {
     const unsafePatterns = /\b(stupid|dumb|idiot|fucked?|fucking|shit|bitch|damn|hell)\b/i;
     const extremeUnsafePatterns = /\b(kill|murder|suicide|terrorist|bomb|weapon|rape|molest)\b/i;
 
-    // --- IMPROVED NAME EXTRACTION LOGIC ---
-    const commonNonNames =
-      "yard|dumpster|atlanta|peachtree|fairburn|fayetteville|newnan|tyrone|need|want|help|rental|rent|delivery|pickup|dropoff|drop-off|" +
-      "booking|book|booked|quote|pricing|price|cost|estimate|schedule|time|date|when|where|right|size|project|clean|cleanout|cleanup|cleaning|look|" +
-      "looking|find|finding|junk|trash|debris|waste|hello|hi|hey|thanks|thank|yes|no|ok|okay|have|items|left|over|move|get|reid|rid";
-    
-    const simpleNameRegex = new RegExp(`\\b(?!(?:${commonNonNames})\\b)([a-z][a-z']{1,})\\b`, "gi");
-    const fullNameRegex = /\b([a-z][a-z']{2,})\s+([a-z][a-z']{2,})\b/gi;
-    const myNameIsRegex = /(?:my name is|i\'m|im|i am)\s+([A-Za-z]+(?:\s+[A-Za-z]+){0,3})[\s\.]?/i;
-    
-    const toTitleCase = (name) =>
-      name
-        .trim()
-        .split(/\s+/)
-        .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
-        .join(" ");
-
+    // Basic regex for quick checks
     const phoneRegex = /(\d{3})[ .-]?(\d{3})[ .-]?(\d{4})/;
     const emailRegex = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
-    const addressRegex = /\d{1,5}\s+[A-Za-z0-9\s,.#-]+(Street|St|Avenue|Ave|Road|Rd|Lane|Ln|Drive|Dr|Court|Ct|Trail|Way|Blvd|Boulevard|Place|Pl|Parkway|Pkwy|Circle|Cir)(?:\s+[A-Za-z\s]+)?/i;
 
-    // Extract name - prioritize explicit "my name is" then full names, then single names
-    let nameToUse = null;
-    const myNameMatch = allUserText.match(myNameIsRegex);
-    
-    if (myNameMatch && myNameMatch[1]) {
-      nameToUse = myNameMatch[1].trim();
-    } else {
-      // Get all full name matches and take the LAST one
-      const allFullMatches = Array.from(allUserText.matchAll(fullNameRegex));
-      if (allFullMatches.length > 0) {
-        nameToUse = allFullMatches[allFullMatches.length - 1][0].trim();
-      } else {
-        // Fallback to simple name matches, take the LAST one
-        const allSimpleMatches = Array.from(allUserText.matchAll(simpleNameRegex));
-        if (allSimpleMatches.length > 0) {
-          nameToUse = allSimpleMatches[allSimpleMatches.length - 1][0].trim();
-        }
-      }
-    }
+    // Quick check if we have minimum info (name will be extracted by AI later)
+    const hasNumber = phoneRegex.test(allUserText);
+    const hasEmail = emailRegex.test(allUserText);
+    const hasMinimumInfo = hasNumber || hasEmail;
 
-    if (nameToUse) {
-      nameToUse = toTitleCase(nameToUse);
-    }
-
-    // Extract contact info
-    const hasName = !!(nameToUse && nameToUse.trim());
-    const phoneMatch = allUserText.match(phoneRegex);
-    const hasNumber = !!phoneMatch;
-    const emailMatch = allUserText.match(emailRegex);
-    const hasEmail = !!emailMatch;
-    
-    // Extract address - get ALL matches and take the LAST complete one
-    const allAddressMatches = Array.from(allUserText.matchAll(new RegExp(addressRegex, 'gi')));
-    let addressMatch = null;
-    
-    if (allAddressMatches.length > 0) {
-      // Take the last match and clean it
-      const lastMatch = allAddressMatches[allAddressMatches.length - 1][0];
-      // Remove any leading digits that might be from phone numbers
-      addressMatch = lastMatch.replace(/^\d{4}\s+/, '').trim();
-    }
-    
-    const hasAddress = !!addressMatch;
-    const hasMinimumInfo = hasName && (hasNumber || hasEmail);
-
-    const nameMatch = hasName ? [nameToUse] : null;
     const formatPhone = (m) => (m ? `${m[1]}-${m[2]}-${m[3]}` : "Not provided");
 
     // Immediate block for extreme content
@@ -174,14 +116,16 @@ export default async function handler(req, res) {
       /^(thanks|thank you|bye|goodbye|ok|okay|perfect|sounds good|great|got it|that's all|all set|done)$/i;
     const isEndingChat = endOfChatSignals.test(lastUserMessage) && hasMinimumInfo;
 
-    // Chat closed event
+    // If frontend sends chatClosed event and we have minimum info → extract and send lead
     if (event === "chatClosed" && hasMinimumInfo) {
-      console.log("📧 Chat closed - sending lead email");
+      console.log("📧 Chat closed - extracting lead info with AI");
+      const extractedInfo = await extractLeadInfoWithAI(messages);
+      
       await sendLeadEmail(
-        nameMatch?.[0] || "Unknown",
-        hasNumber ? formatPhone(phoneMatch) : "Not provided",
-        hasEmail ? emailMatch?.[0] : "Not provided",
-        hasAddress ? addressMatch : "Not provided",
+        extractedInfo.name || "Unknown",
+        extractedInfo.phone || "Not provided",
+        extractedInfo.email || "Not provided",
+        extractedInfo.address || "Not provided",
         messages,
         ""
       );
@@ -190,21 +134,23 @@ export default async function handler(req, res) {
 
     // Escalation handling
     if (escalationIntent) {
+      const phoneMatch = allUserText.match(phoneRegex);
       if (hasNumber) {
+        const extractedInfo = await extractLeadInfoWithAI(messages);
+        
         console.log("🚨 Escalation triggered:", {
-          name: nameMatch?.[0] || "Customer",
-          phone: formatPhone(phoneMatch)
+          name: extractedInfo.name || "Customer",
+          phone: extractedInfo.phone || formatPhone(phoneMatch)
         });
+        
         await sendEscalationEmail(
-          nameMatch?.[0] || "Customer",
-          formatPhone(phoneMatch),
+          extractedInfo.name || "Customer",
+          extractedInfo.phone || formatPhone(phoneMatch),
           lastUserMessage,
           messages
         );
         return res.status(200).json({
-          reply: `I completely understand — let me have one of our team members give you a call at ${formatPhone(
-            phoneMatch
-          )}. They'll be able to help you better. Someone will reach out within the next few hours during business hours. Thanks for your patience! 👍`,
+          reply: `I completely understand — let me have one of our team members give you a call at ${extractedInfo.phone || formatPhone(phoneMatch)}. They'll be able to help you better. Someone will reach out within the next few hours during business hours. Thanks for your patience! 👍`,
         });
       } else {
         if (askedForContactCount >= 1) {
@@ -287,7 +233,7 @@ DUMPSTER SIZING (high level; do not hard-quote prices):
       });
     }
 
-    if (hasMinimumInfo && (!hasAddress || !hasEmail) && askedForAddressEmailCount === 0) {
+    if (hasMinimumInfo && askedForAddressEmailCount === 0) {
       antiLoopHints.push({
         role: "system",
         content:
@@ -352,18 +298,17 @@ DUMPSTER SIZING (high level; do not hard-quote prices):
     );
 
     if (isEndingChat && hasMinimumInfo && !leadAlreadySignaled) {
-      console.log("📧 Lead capture triggered:", {
-        name: nameMatch?.[0] || "Unknown",
-        phone: formatPhone(phoneMatch),
-        email: emailMatch?.[0] || "Not provided",
-        address: addressMatch || "Not provided"
-      });
+      console.log("📧 Lead capture triggered - extracting info with AI");
+      
+      const extractedInfo = await extractLeadInfoWithAI(messages);
+      
+      console.log("📧 Extracted lead info:", extractedInfo);
       
       const emailSent = await sendLeadEmail(
-        nameMatch?.[0] || "Unknown",
-        hasNumber ? formatPhone(phoneMatch) : "Not provided",
-        hasEmail ? emailMatch?.[0] : "Not provided",
-        hasAddress ? addressMatch : "Not provided",
+        extractedInfo.name || "Unknown",
+        extractedInfo.phone || "Not provided",
+        extractedInfo.email || "Not provided",
+        extractedInfo.address || "Not provided",
         messages,
         reply
       );
@@ -389,6 +334,85 @@ DUMPSTER SIZING (high level; do not hard-quote prices):
   }
 }
 
+// -------- NEW: AI-Powered Lead Extraction --------
+async function extractLeadInfoWithAI(messages) {
+  try {
+    const extractionPrompt = `You are a data extraction assistant. Review this conversation and extract the customer's contact information.
+
+Return ONLY a JSON object with these fields (use "Not provided" if information is missing):
+{
+  "name": "Customer's full name",
+  "phone": "Phone number in format XXX-XXX-XXXX",
+  "email": "Email address",
+  "address": "Full delivery address"
+}
+
+Rules:
+- Extract the customer's actual name (ignore phrases like "the help", "I need", etc.)
+- Format phone as XXX-XXX-XXXX
+- Return complete street address if provided
+- Use "Not provided" for missing fields
+- Return ONLY valid JSON, no other text`;
+
+    const conversationText = messages
+      .filter(m => m.role === "user")
+      .map((m, i) => `Message ${i + 1}: ${m.content}`)
+      .join("\n");
+
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        temperature: 0,
+        messages: [
+          { role: "system", content: extractionPrompt },
+          { role: "user", content: conversationText }
+        ],
+      }),
+    });
+
+    const data = await response.json();
+    
+    if (!response.ok) {
+      console.error("❌ Extraction API error:", data);
+      return {
+        name: "Not provided",
+        phone: "Not provided",
+        email: "Not provided",
+        address: "Not provided"
+      };
+    }
+
+    const extractedText = data.choices?.[0]?.message?.content?.trim() || "{}";
+    
+    // Clean up response (remove markdown formatting if present)
+    const cleanedText = extractedText.replace(/```json\n?|\n?```/g, "").trim();
+    
+    const extracted = JSON.parse(cleanedText);
+    
+    console.log("✅ AI extracted lead info:", extracted);
+    
+    return {
+      name: extracted.name || "Not provided",
+      phone: extracted.phone || "Not provided",
+      email: extracted.email || "Not provided",
+      address: extracted.address || "Not provided"
+    };
+  } catch (err) {
+    console.error("❌ Error extracting lead info with AI:", err);
+    return {
+      name: "Not provided",
+      phone: "Not provided",
+      email: "Not provided",
+      address: "Not provided"
+    };
+  }
+}
+
 // ---------------- Email helpers ----------------
 
 async function sendLeadEmail(name, phone, email, address, messages, lastReply) {
@@ -397,7 +421,7 @@ async function sendLeadEmail(name, phone, email, address, messages, lastReply) {
       .map((m) => `${m.role === "user" ? "Customer" : "Randy"}: ${m.content}`)
       .join("\n\n");
 
-    const displayName = (name || "Customer").split(" ")[0];
+    const displayName = (name && name !== "Not provided") ? name.split(" ")[0] : "Customer";
 
     // Simple inference from conversation text
     let recommendedDumpster = "Not yet determined";
