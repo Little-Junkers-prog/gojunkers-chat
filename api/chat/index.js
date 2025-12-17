@@ -55,11 +55,12 @@ export default async function handler(req, res) {
     const unsafePatterns = /\b(stupid|dumb|idiot|fucked?|fucking|shit|bitch|damn|hell)\b/i;
     const extremeUnsafePatterns = /\b(kill|murder|suicide|terrorist|bomb|weapon|rape|molest)\b/i;
 
-    // Basic regex for quick checks
+    // Basic regex for quick checks and fallback validation
     const phoneRegex = /(\d{3})[ .-]?(\d{3})[ .-]?(\d{4})/;
     const emailRegex = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
+    const addressRegex = /\d{1,5}\s+[A-Za-z0-9\s,.#-]+(Street|St|Avenue|Ave|Road|Rd|Lane|Ln|Drive|Dr|Court|Ct|Trail|Way|Blvd|Boulevard|Place|Pl|Parkway|Pkwy|Circle|Cir)(?:\s+[A-Za-z\s]+)?/i;
 
-    // Quick check if we have minimum info (name will be extracted by AI later)
+    // Quick check if we have minimum info
     const hasNumber = phoneRegex.test(allUserText);
     const hasEmail = emailRegex.test(allUserText);
     const hasMinimumInfo = hasNumber || hasEmail;
@@ -116,16 +117,19 @@ export default async function handler(req, res) {
       /^(thanks|thank you|bye|goodbye|ok|okay|perfect|sounds good|great|got it|that's all|all set|done)$/i;
     const isEndingChat = endOfChatSignals.test(lastUserMessage) && hasMinimumInfo;
 
+    // 📦 UPGRADE 1: Cache extracted lead info to avoid duplicate API calls
+    let cachedLeadInfo = null;
+
     // If frontend sends chatClosed event and we have minimum info → extract and send lead
     if (event === "chatClosed" && hasMinimumInfo) {
       console.log("📧 Chat closed - extracting lead info with AI");
-      const extractedInfo = await extractLeadInfoWithAI(messages);
+      cachedLeadInfo = await extractLeadInfoWithAI(messages, allUserText);
       
       await sendLeadEmail(
-        extractedInfo.name || "Unknown",
-        extractedInfo.phone || "Not provided",
-        extractedInfo.email || "Not provided",
-        extractedInfo.address || "Not provided",
+        cachedLeadInfo.name || "Unknown",
+        cachedLeadInfo.phone || "Not provided",
+        cachedLeadInfo.email || "Not provided",
+        cachedLeadInfo.address || "Not provided",
         messages,
         ""
       );
@@ -136,7 +140,9 @@ export default async function handler(req, res) {
     if (escalationIntent) {
       const phoneMatch = allUserText.match(phoneRegex);
       if (hasNumber) {
-        const extractedInfo = await extractLeadInfoWithAI(messages);
+        // Use cached info or extract fresh
+        const extractedInfo = cachedLeadInfo || await extractLeadInfoWithAI(messages, allUserText);
+        cachedLeadInfo = extractedInfo; // Cache for later use
         
         console.log("🚨 Escalation triggered:", {
           name: extractedInfo.name || "Customer",
@@ -300,7 +306,8 @@ DUMPSTER SIZING (high level; do not hard-quote prices):
     if (isEndingChat && hasMinimumInfo && !leadAlreadySignaled) {
       console.log("📧 Lead capture triggered - extracting info with AI");
       
-      const extractedInfo = await extractLeadInfoWithAI(messages);
+      // Use cached info or extract fresh
+      const extractedInfo = cachedLeadInfo || await extractLeadInfoWithAI(messages, allUserText);
       
       console.log("📧 Extracted lead info:", extractedInfo);
       
@@ -334,8 +341,8 @@ DUMPSTER SIZING (high level; do not hard-quote prices):
   }
 }
 
-// -------- NEW: AI-Powered Lead Extraction --------
-async function extractLeadInfoWithAI(messages) {
+// -------- UPGRADE 2 & 3: AI-Powered Lead Extraction with Fallback Validation & Enhanced Logging --------
+async function extractLeadInfoWithAI(messages, allUserText) {
   try {
     const extractionPrompt = `You are a data extraction assistant. Review this conversation and extract the customer's contact information.
 
@@ -344,7 +351,8 @@ Return ONLY a JSON object with these fields (use "Not provided" if information i
   "name": "Customer's full name",
   "phone": "Phone number in format XXX-XXX-XXXX",
   "email": "Email address",
-  "address": "Full delivery address"
+  "address": "Full delivery address",
+  "confidence": "high/medium/low"
 }
 
 Rules:
@@ -352,6 +360,7 @@ Rules:
 - Format phone as XXX-XXX-XXXX
 - Return complete street address if provided
 - Use "Not provided" for missing fields
+- Set confidence based on clarity of extraction
 - Return ONLY valid JSON, no other text`;
 
     const conversationText = messages
@@ -379,12 +388,8 @@ Rules:
     
     if (!response.ok) {
       console.error("❌ Extraction API error:", data);
-      return {
-        name: "Not provided",
-        phone: "Not provided",
-        email: "Not provided",
-        address: "Not provided"
-      };
+      // Fallback to regex extraction
+      return regexFallbackExtraction(allUserText);
     }
 
     const extractedText = data.choices?.[0]?.message?.content?.trim() || "{}";
@@ -394,31 +399,110 @@ Rules:
     
     const extracted = JSON.parse(cleanedText);
     
-    console.log("✅ AI extracted lead info:", extracted);
+    // UPGRADE 2: Fallback validation using regex
+    const validated = validateAndEnhanceExtraction(extracted, allUserText);
     
-    return {
-      name: extracted.name || "Not provided",
-      phone: extracted.phone || "Not provided",
-      email: extracted.email || "Not provided",
-      address: extracted.address || "Not provided"
-    };
+    // UPGRADE 3: Enhanced logging
+    console.log("✅ AI extracted lead info:", {
+      name: validated.name,
+      phone: validated.phone,
+      email: validated.email,
+      address: validated.address,
+      confidence: validated.confidence || "not specified",
+      fallbackUsed: validated.fallbackUsed || false
+    });
+    
+    // Flag unusual patterns
+    if (validated.confidence === "low" || validated.fallbackUsed) {
+      console.warn("⚠️ Low confidence extraction - manual review recommended");
+    }
+    
+    return validated;
   } catch (err) {
     console.error("❌ Error extracting lead info with AI:", err);
-    return {
-      name: "Not provided",
-      phone: "Not provided",
-      email: "Not provided",
-      address: "Not provided"
-    };
+    // Final fallback to regex
+    return regexFallbackExtraction(allUserText);
   }
+}
+
+// UPGRADE 2: Regex fallback extraction
+function regexFallbackExtraction(allUserText) {
+  console.log("⚠️ Using regex fallback extraction");
+  
+  const phoneRegex = /(\d{3})[ .-]?(\d{3})[ .-]?(\d{4})/;
+  const emailRegex = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
+  const addressRegex = /\d{1,5}\s+[A-Za-z0-9\s,.#-]+(Street|St|Avenue|Ave|Road|Rd|Lane|Ln|Drive|Dr|Court|Ct|Trail|Way|Blvd|Boulevard|Place|Pl|Parkway|Pkwy|Circle|Cir)(?:\s+[A-Za-z\s]+)?/i;
+  
+  const phoneMatch = allUserText.match(phoneRegex);
+  const emailMatch = allUserText.match(emailRegex);
+  const addressMatch = allUserText.match(addressRegex);
+  
+  const formatPhone = (m) => (m ? `${m[1]}-${m[2]}-${m[3]}` : "Not provided");
+  
+  return {
+    name: "Not provided",
+    phone: phoneMatch ? formatPhone(phoneMatch) : "Not provided",
+    email: emailMatch ? emailMatch[0] : "Not provided",
+    address: addressMatch ? addressMatch[0].replace(/^\d{4}\s+/, '').trim() : "Not provided",
+    confidence: "low",
+    fallbackUsed: true
+  };
+}
+
+// UPGRADE 2: Validate AI extraction against regex patterns
+function validateAndEnhanceExtraction(extracted, allUserText) {
+  const phoneRegex = /(\d{3})[ .-]?(\d{3})[ .-]?(\d{4})/;
+  const emailRegex = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
+  
+  let validated = { ...extracted };
+  let fallbackUsed = false;
+  
+  // Validate phone format
+  if (extracted.phone && extracted.phone !== "Not provided") {
+    if (!/^\d{3}-\d{3}-\d{4}$/.test(extracted.phone)) {
+      // Try to fix formatting
+      const phoneMatch = extracted.phone.match(/(\d{3})\D*(\d{3})\D*(\d{4})/);
+      if (phoneMatch) {
+        validated.phone = `${phoneMatch[1]}-${phoneMatch[2]}-${phoneMatch[3]}`;
+      } else {
+        // Fallback to regex extraction
+        const fallbackPhone = allUserText.match(phoneRegex);
+        if (fallbackPhone) {
+          validated.phone = `${fallbackPhone[1]}-${fallbackPhone[2]}-${fallbackPhone[3]}`;
+          fallbackUsed = true;
+        }
+      }
+    }
+  }
+  
+  // Validate email format
+  if (extracted.email && extracted.email !== "Not provided") {
+    if (!emailRegex.test(extracted.email)) {
+      // Fallback to regex extraction
+      const fallbackEmail = allUserText.match(emailRegex);
+      if (fallbackEmail) {
+        validated.email = fallbackEmail[0];
+        fallbackUsed = true;
+      }
+    }
+  }
+  
+  validated.fallbackUsed = fallbackUsed;
+  return validated;
 }
 
 // ---------------- Email helpers ----------------
 
 async function sendLeadEmail(name, phone, email, address, messages, lastReply) {
   try {
+    // 🔧 FIX: Properly format conversation history with correct speaker labels
     const history = messages
-      .map((m) => `${m.role === "user" ? "Customer" : "Randy"}: ${m.content}`)
+      .map((m) => {
+        // Randy's messages are from "assistant" role
+        // Customer's messages are from "user" role
+        const speaker = m.role === "assistant" ? "Randy" : "Customer";
+        return `${speaker}: ${m.content}`;
+      })
       .join("\n\n");
 
     const displayName = (name && name !== "Not provided") ? name.split(" ")[0] : "Customer";
@@ -480,8 +564,12 @@ async function sendLeadEmail(name, phone, email, address, messages, lastReply) {
 
 async function sendEscalationEmail(name, phone, issue, messages) {
   try {
+    // 🔧 FIX: Properly format conversation history with correct speaker labels
     const history = messages
-      .map((m) => `${m.role === "user" ? "Customer" : "Randy"}: ${m.content}`)
+      .map((m) => {
+        const speaker = m.role === "assistant" ? "Randy" : "Customer";
+        return `${speaker}: ${m.content}`;
+      })
       .join("\n\n");
 
     const ESCALATION_EMAIL = process.env.EMAIL_TO || "customer_service@littlejunkersllc.com";
@@ -528,3 +616,4 @@ async function sendEscalationEmail(name, phone, issue, messages) {
     return false;
   }
 }
+```
