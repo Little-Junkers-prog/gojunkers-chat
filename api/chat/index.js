@@ -60,9 +60,8 @@ export default async function handler(req, res) {
     // --- IMPROVED NAME EXTRACTION LOGIC ---
     const commonNonNames =
       "yard|dumpster|atlanta|peachtree|fairburn|fayetteville|newnan|tyrone|need|want|help|rental|rent|delivery|pickup|dropoff|drop-off|" +
-      "booking|book|booked|quote|pricing|price|cost|estimate|schedule|time|date|when|where|right|size|project|clean|cleanout|cleanup|cleaning|" +
-      "look|looking|find|finding|remove|removing|removal|junk|trash|debris|waste|hello|hi|hey|thanks|thank|yes|no|ok|okay";
-    const nonNameSet = new Set(commonNonNames.split("|").map((w) => w.toLowerCase()));
+      "booking|book|booked|quote|pricing|price|cost|estimate|schedule|time|date|when|where|right|size|project|clean|cleanout|cleanup|cleaning|look|" +
+      "looking|find|finding|junk|trash|debris|waste|hello|hi|hey|thanks|thank|yes|no|ok|okay";
     const simpleNameRegex = new RegExp(`\\b(?!${commonNonNames})([a-z][a-z']{1,})\\b`, "gi");
     const fullNameRegex = /\b([a-z][a-z']{1,})\s+([a-z][a-z']{1,})\b/gi;
     const myNameIsRegex = /(?:my name is|i\'m|im|i am)\s*([A-Za-z]+(?:\s+[A-Za-z]+){0,3})[\s\.]?/i;
@@ -83,19 +82,13 @@ export default async function handler(req, res) {
     if (myNameMatch && myNameMatch[1]) {
       nameToUse = myNameMatch[1].trim();
     } else {
-      const fullMatch = Array.from(allUserText.matchAll(fullNameRegex)).map((m) => m[0]);
-      const validFullNames = fullMatch.filter((name) => {
-        const parts = name.split(/\s+/);
-        return parts.every((p) => !nonNameSet.has(p.toLowerCase()));
-      });
-      if (validFullNames.length > 0) {
-        nameToUse = validFullNames[validFullNames.length - 1].trim();
+      const fullMatch = allUserText.match(fullNameRegex);
+      if (fullMatch && fullMatch[0]) {
+        nameToUse = fullMatch[0].trim();
       } else {
-        const allSimpleMatches = Array.from(allUserText.matchAll(simpleNameRegex))
-          .map((m) => m[0])
-          .filter((candidate) => !nonNameSet.has(candidate.toLowerCase()));
+        const allSimpleMatches = Array.from(allUserText.matchAll(simpleNameRegex));
         if (allSimpleMatches.length > 0) {
-          nameToUse = allSimpleMatches[allSimpleMatches.length - 1].trim();
+          nameToUse = allSimpleMatches[allSimpleMatches.length - 1][0].trim();
         }
       }
     }
