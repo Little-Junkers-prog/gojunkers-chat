@@ -1,8 +1,6 @@
 export default async function handler(req, res) {
-  // Get the origin from the request
   const origin = req.headers.origin;
   
-  // Allow requests from your domain (both www and non-www)
   const allowedOrigins = [
     "https://www.littlejunkersllc.com",
     "https://littlejunkersllc.com",
@@ -18,7 +16,6 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   res.setHeader("Access-Control-Max-Age", "86400");
 
-  // Handle OPTIONS preflight request
   if (req.method === "OPTIONS") {
     return res.status(200).end();
   }
@@ -32,7 +29,6 @@ export default async function handler(req, res) {
     let messages = Array.isArray(body.messages) ? body.messages : [];
     const event = body.event || null;
 
-    // 🛡️ Input size control - prevent token overflow
     const MAX_MESSAGES = 50;
     if (messages.length > MAX_MESSAGES) {
       const systemMessages = messages.filter(m => m.role === "system");
@@ -41,7 +37,6 @@ export default async function handler(req, res) {
       console.log(`⚠️ Message history trimmed to prevent overflow`);
     }
 
-    // ---------- Helpers ----------
     const getAllUserText = (msgs) =>
       msgs.filter((m) => m.role === "user").map((m) => m.content || "").join(" ");
 
@@ -51,55 +46,45 @@ export default async function handler(req, res) {
 
     const allUserText = getAllUserText(messages);
 
-    // 🛑 Profanity filters
     const unsafePatterns = /\b(stupid|dumb|idiot|fucked?|fucking|shit|bitch|damn|hell)\b/i;
     const extremeUnsafePatterns = /\b(kill|murder|suicide|terrorist|bomb|weapon|rape|molest)\b/i;
 
-    // Basic regex for quick checks and fallback validation
     const phoneRegex = /(\d{3})[ .-]?(\d{3})[ .-]?(\d{4})/;
     const emailRegex = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
-    const addressRegex = /\d{1,5}\s+[A-Za-z0-9\s,.#-]+(Street|St|Avenue|Ave|Road|Rd|Lane|Ln|Drive|Dr|Court|Ct|Trail|Way|Blvd|Boulevard|Place|Pl|Parkway|Pkwy|Circle|Cir)(?:\s+[A-Za-z\s]+)?/i;
 
-    // Quick check if we have minimum info
     const hasNumber = phoneRegex.test(allUserText);
     const hasEmail = emailRegex.test(allUserText);
     const hasMinimumInfo = hasNumber || hasEmail;
 
     const formatPhone = (m) => (m ? `${m[1]}-${m[2]}-${m[3]}` : "Not provided");
 
-    // Immediate block for extreme content
     if (extremeUnsafePatterns.test(lastUserMessage)) {
       return res.status(200).json({
         reply: "I'm ending this chat now. Please call us at 470-548-4733 if you need assistance. Take care.",
       });
     }
 
-    // Count profanity across the thread
     const profanityCount = messages.filter(
       (m) => m.role === "user" && unsafePatterns.test(m.content || "")
     ).length;
 
     if (profanityCount >= 2) {
       return res.status(200).json({
-        reply:
-          "I'm going to end this chat now. Please call us at 470-548-4733 if you'd like to rent a dumpster. Take care.",
+        reply: "I'm going to end this chat now. Please call us at 470-548-4733 if you'd like to rent a dumpster. Take care.",
       });
     }
 
     if (unsafePatterns.test(lastUserMessage)) {
       return res.status(200).json({
-        reply:
-          "I'm here to help with dumpster rentals and cleanup services. Let's stay on topic 👍",
+        reply: "I'm here to help with dumpster rentals and cleanup services. Let's stay on topic 👍",
       });
     }
 
-    // Escalation cues
     const escalationIntent =
       /(speak.*human|talk.*person|talk.*someone|manager|supervisor|can't help|not helping|frustrated|angry|ridiculous|unacceptable|terrible service)/i.test(
         lastUserMessage
       );
 
-    // Loop prevention counters
     const askedForContactCount = messages.filter(
       (m) =>
         m.role === "assistant" &&
@@ -112,15 +97,12 @@ export default async function handler(req, res) {
         /(delivery address|address|drop.?off address|email)/i.test(m.content || "")
     ).length;
 
-    // End-of-chat signals
     const endOfChatSignals =
       /^(thanks|thank you|bye|goodbye|ok|okay|perfect|sounds good|great|got it|that's all|all set|done)$/i;
     const isEndingChat = endOfChatSignals.test(lastUserMessage) && hasMinimumInfo;
 
-    // 📦 UPGRADE 1: Cache extracted lead info to avoid duplicate API calls
     let cachedLeadInfo = null;
 
-    // If frontend sends chatClosed event and we have minimum info → extract and send lead
     if (event === "chatClosed" && hasMinimumInfo) {
       console.log("📧 Chat closed - extracting lead info with AI");
       cachedLeadInfo = await extractLeadInfoWithAI(messages, allUserText);
@@ -136,13 +118,11 @@ export default async function handler(req, res) {
       return res.status(200).json({ reply: "Chat closed, lead captured." });
     }
 
-    // Escalation handling
     if (escalationIntent) {
       const phoneMatch = allUserText.match(phoneRegex);
       if (hasNumber) {
-        // Use cached info or extract fresh
         const extractedInfo = cachedLeadInfo || await extractLeadInfoWithAI(messages, allUserText);
-        cachedLeadInfo = extractedInfo; // Cache for later use
+        cachedLeadInfo = extractedInfo;
         
         console.log("🚨 Escalation triggered:", {
           name: extractedInfo.name || "Customer",
@@ -161,26 +141,21 @@ export default async function handler(req, res) {
       } else {
         if (askedForContactCount >= 1) {
           return res.status(200).json({
-            reply:
-              "I'd be happy to connect you with someone from our team. To do that, I'll need a phone number for them to call you back. Or you can call us directly at 470-548-4733.",
+            reply: "I'd be happy to connect you with someone from our team. To do that, I'll need a phone number for them to call you back. Or you can call us directly at 470-548-4733.",
           });
         }
         return res.status(200).json({
-          reply:
-            "I understand — let me connect you with someone from our team. What's the best phone number for a callback?",
+          reply: "I understand — let me connect you with someone from our team. What's the best phone number for a callback?",
         });
       }
     }
 
-    // Bereavement detection
     const hasBereavementCue =
       /(my (dad|mom|father|mother|grandma|grandpa|grandmother|grandfather|parent|spouse|wife|husband)) (just )?(passed|died)|lost my (dad|mom|father|mother|grandma|grandpa|grandmother|grandfather|parent|spouse)|bereavement|estate cleanout|death in (the )?family/i.test(
         lastUserMessage
       );
 
-    // -------- SYSTEM PROMPT --------
-    const systemPrompt = `
-You are "Randy Miller," the friendly, helpful assistant for Little Junkers — a local dumpster rental service.
+    const systemPrompt = `You are "Randy Miller," the friendly, helpful assistant for Little Junkers — a local dumpster rental service.
 Tone: warm, professional, conversational. If the user mentions a loss or bereavement, begin with a brief, sincere condolence (one sentence) before helping.
 
 MISSION
@@ -217,53 +192,45 @@ FORMATTING RULES
 DUMPSTER SIZING (high level; do not hard-quote prices):
 - 11-yard: small cleanouts (garages, yard waste) - $225/2 days
 - 16-yard: kitchen/basement remodels, medium projects - $275/2 days
-- 21-yard: large renovations, roofing, construction - $325/2 days
-`;
+- 21-yard: large renovations, roofing, construction - $325/2 days`;
 
-    // Anti-loop system nudges
     const antiLoopHints = [];
     
     if (askedForContactCount >= 2 && !hasMinimumInfo) {
       antiLoopHints.push({
         role: "system",
-        content:
-          "You have already asked for contact information twice and the user has refused. DO NOT ask again. Politely direct them to <https://www.littlejunkersllc.com/shop> or 470-548-4733 and close. Do NOT say 'someone will follow up' since you have no contact info.",
+        content: "You have already asked for contact information twice and the user has refused. DO NOT ask again. Politely direct them to <https://www.littlejunkersllc.com/shop> or 470-548-4733 and close. Do NOT say 'someone will follow up' since you have no contact info.",
       });
     }
     
     if (hasMinimumInfo && askedForAddressEmailCount >= 1) {
       antiLoopHints.push({
         role: "system",
-        content:
-          "You have already asked for address/email once after capturing contact. Do not ask again; proceed to close politely.",
+        content: "You have already asked for address/email once after capturing contact. Do not ask again; proceed to close politely.",
       });
     }
 
     if (hasMinimumInfo && askedForAddressEmailCount === 0) {
       antiLoopHints.push({
         role: "system",
-        content:
-          "You have name + phone/email. You may ask ONCE (politely) for delivery address if helpful, then proceed to answer questions or close.",
+        content: "You have name + phone/email. You may ask ONCE (politely) for delivery address if helpful, then proceed to answer questions or close.",
       });
     }
 
     if (isEndingChat) {
       antiLoopHints.push({
         role: "system",
-        content:
-          "User signaled the chat is done. Thank them, confirm someone will reach out shortly, and close politely.",
+        content: "User signaled the chat is done. Thank them, confirm someone will reach out shortly, and close politely.",
       });
     }
 
     if (hasBereavementCue) {
       antiLoopHints.push({
         role: "system",
-        content:
-          "Begin with a brief, sincere condolence (one sentence) before continuing with helpful guidance about their estate/cleanout needs.",
+        content: "Begin with a brief, sincere condolence (one sentence) before continuing with helpful guidance about their estate/cleanout needs.",
       });
     }
 
-    // -------- OpenAI Call --------
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -287,26 +254,19 @@ DUMPSTER SIZING (high level; do not hard-quote prices):
       return res.status(500).json({ reply: "OpenAI API error" });
     }
 
-    let reply =
-      data.choices?.[0]?.message?.content?.trim() ||
-      "Sorry, I didn't catch that. Could you rephrase?";
+    let reply = data.choices?.[0]?.message?.content?.trim() || "Sorry, I didn't catch that. Could you rephrase?";
 
-    // Wrap URLs in < >
     reply = reply.replace(/(https?:\/\/[^\s<>]+)/g, "<$1>");
 
-    // ---- Lead capture triggers ----
     const leadAlreadySignaled = messages.some(
       (m) =>
         m.role === "assistant" &&
-        /i'?ve got everything i need|we'll reach out shortly|thanks for choosing little junkers/i.test(
-          m.content || ""
-        )
+        /i'?ve got everything i need|we'll reach out shortly|thanks for choosing little junkers/i.test(m.content || "")
     );
 
     if (isEndingChat && hasMinimumInfo && !leadAlreadySignaled) {
       console.log("📧 Lead capture triggered - extracting info with AI");
       
-      // Use cached info or extract fresh
       const extractedInfo = cachedLeadInfo || await extractLeadInfoWithAI(messages, allUserText);
       
       console.log("📧 Extracted lead info:", extractedInfo);
@@ -321,17 +281,14 @@ DUMPSTER SIZING (high level; do not hard-quote prices):
       );
       
       if (emailSent) {
-        reply =
-          "Perfect! 👍 I've got everything I need. Someone from our team will reach out shortly to confirm your dumpster delivery. Thanks for choosing Little Junkers!";
+        reply = "Perfect! 👍 I've got everything I need. Someone from our team will reach out shortly to confirm your dumpster delivery. Thanks for choosing Little Junkers!";
       } else {
-        reply =
-          "Thanks! I've saved your info, though we're having a small technical hiccup on our end. No worries — someone from our team will still reach out to you shortly! 👍";
+        reply = "Thanks! I've saved your info, though we're having a small technical hiccup on our end. No worries — someone from our team will still reach out to you shortly! 👍";
       }
     }
 
     if (askedForContactCount >= 2 && !hasMinimumInfo) {
-      reply =
-        "No problem — I completely understand! You can book directly here anytime: <https://www.littlejunkersllc.com/shop> or call us at 470-548-4733. 👍";
+      reply = "No problem — I completely understand! You can book directly here anytime: <https://www.littlejunkersllc.com/shop> or call us at 470-548-4733. 👍";
     }
 
     return res.status(200).json({ reply });
@@ -341,7 +298,6 @@ DUMPSTER SIZING (high level; do not hard-quote prices):
   }
 }
 
-// -------- UPGRADE 2 & 3: AI-Powered Lead Extraction with Fallback Validation & Enhanced Logging --------
 async function extractLeadInfoWithAI(messages, allUserText) {
   try {
     const extractionPrompt = `You are a data extraction assistant. Review this conversation and extract the customer's contact information.
@@ -388,21 +344,14 @@ Rules:
     
     if (!response.ok) {
       console.error("❌ Extraction API error:", data);
-      // Fallback to regex extraction
       return regexFallbackExtraction(allUserText);
     }
 
     const extractedText = data.choices?.[0]?.message?.content?.trim() || "{}";
-    
-    // Clean up response (remove markdown formatting if present)
     const cleanedText = extractedText.replace(/```json\n?|\n?```/g, "").trim();
-    
     const extracted = JSON.parse(cleanedText);
-    
-    // UPGRADE 2: Fallback validation using regex
     const validated = validateAndEnhanceExtraction(extracted, allUserText);
     
-    // UPGRADE 3: Enhanced logging
     console.log("✅ AI extracted lead info:", {
       name: validated.name,
       phone: validated.phone,
@@ -412,7 +361,6 @@ Rules:
       fallbackUsed: validated.fallbackUsed || false
     });
     
-    // Flag unusual patterns
     if (validated.confidence === "low" || validated.fallbackUsed) {
       console.warn("⚠️ Low confidence extraction - manual review recommended");
     }
@@ -420,12 +368,10 @@ Rules:
     return validated;
   } catch (err) {
     console.error("❌ Error extracting lead info with AI:", err);
-    // Final fallback to regex
     return regexFallbackExtraction(allUserText);
   }
 }
 
-// UPGRADE 2: Regex fallback extraction
 function regexFallbackExtraction(allUserText) {
   console.log("⚠️ Using regex fallback extraction");
   
@@ -449,7 +395,6 @@ function regexFallbackExtraction(allUserText) {
   };
 }
 
-// UPGRADE 2: Validate AI extraction against regex patterns
 function validateAndEnhanceExtraction(extracted, allUserText) {
   const phoneRegex = /(\d{3})[ .-]?(\d{3})[ .-]?(\d{4})/;
   const emailRegex = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
@@ -457,15 +402,12 @@ function validateAndEnhanceExtraction(extracted, allUserText) {
   let validated = { ...extracted };
   let fallbackUsed = false;
   
-  // Validate phone format
   if (extracted.phone && extracted.phone !== "Not provided") {
     if (!/^\d{3}-\d{3}-\d{4}$/.test(extracted.phone)) {
-      // Try to fix formatting
       const phoneMatch = extracted.phone.match(/(\d{3})\D*(\d{3})\D*(\d{4})/);
       if (phoneMatch) {
         validated.phone = `${phoneMatch[1]}-${phoneMatch[2]}-${phoneMatch[3]}`;
       } else {
-        // Fallback to regex extraction
         const fallbackPhone = allUserText.match(phoneRegex);
         if (fallbackPhone) {
           validated.phone = `${fallbackPhone[1]}-${fallbackPhone[2]}-${fallbackPhone[3]}`;
@@ -475,10 +417,8 @@ function validateAndEnhanceExtraction(extracted, allUserText) {
     }
   }
   
-  // Validate email format
   if (extracted.email && extracted.email !== "Not provided") {
     if (!emailRegex.test(extracted.email)) {
-      // Fallback to regex extraction
       const fallbackEmail = allUserText.match(emailRegex);
       if (fallbackEmail) {
         validated.email = fallbackEmail[0];
@@ -491,15 +431,10 @@ function validateAndEnhanceExtraction(extracted, allUserText) {
   return validated;
 }
 
-// ---------------- Email helpers ----------------
-
 async function sendLeadEmail(name, phone, email, address, messages, lastReply) {
   try {
-    // 🔧 FIX: Properly format conversation history with correct speaker labels
     const history = messages
       .map((m) => {
-        // Randy's messages are from "assistant" role
-        // Customer's messages are from "user" role
         const speaker = m.role === "assistant" ? "Randy" : "Customer";
         return `${speaker}: ${m.content}`;
       })
@@ -507,7 +442,6 @@ async function sendLeadEmail(name, phone, email, address, messages, lastReply) {
 
     const displayName = (name && name !== "Not provided") ? name.split(" ")[0] : "Customer";
 
-    // Simple inference from conversation text
     let recommendedDumpster = "Not yet determined";
     const text = history.toLowerCase();
     if (text.includes("mighty middler") || /\b16\b/.test(text)) {
@@ -564,7 +498,6 @@ async function sendLeadEmail(name, phone, email, address, messages, lastReply) {
 
 async function sendEscalationEmail(name, phone, issue, messages) {
   try {
-    // 🔧 FIX: Properly format conversation history with correct speaker labels
     const history = messages
       .map((m) => {
         const speaker = m.role === "assistant" ? "Randy" : "Customer";
@@ -616,4 +549,3 @@ async function sendEscalationEmail(name, phone, issue, messages) {
     return false;
   }
 }
-```
