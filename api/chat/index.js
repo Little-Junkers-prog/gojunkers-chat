@@ -53,22 +53,64 @@ export default async function handler(req, res) {
 
     // 🛑 FIXED: More precise profanity list (avoids "passed"/"glass" false positives)
     const unsafePatterns = /\b(stupid|dumb|idiot|fucked?|fucking|shit|bitch|damn|hell)\b/i;
-    
+
     // Separate filter for truly unsafe content
     const extremeUnsafePatterns = /\b(kill|murder|suicide|terrorist|bomb|weapon|rape|molest)\b/i;
 
-    const nameRegex = /\b(?!yard|dumpster|atlanta|peachtree|fairburn|fayetteville|newnan|tyrone|need|want|help|rental|rent|delivery|hi|hey|hello|thanks|thank|yes|no|ok|okay)([A-Z][a-z]{1,})\b/i;
+    // --- IMPROVED NAME EXTRACTION LOGIC ---
+    const commonNonNames =
+      "yard|dumpster|atlanta|peachtree|fairburn|fayetteville|newnan|tyrone|need|want|help|rental|rent|delivery|pickup|dropoff|drop-off|" +
+      "booking|book|booked|quote|pricing|price|cost|estimate|schedule|time|date|when|where|right|size|project|clean|cleanout|cleanup|cleaning|" +
+      "look|looking|find|finding|remove|removing|removal|junk|trash|debris|waste|hello|hi|hey|thanks|thank|yes|no|ok|okay";
+    const nonNameSet = new Set(commonNonNames.split("|").map((w) => w.toLowerCase()));
+    const simpleNameRegex = new RegExp(`\\b(?!${commonNonNames})([a-z][a-z']{1,})\\b`, "gi");
+    const fullNameRegex = /\b([a-z][a-z']{1,})\s+([a-z][a-z']{1,})\b/gi;
+    const myNameIsRegex = /(?:my name is|i\'m|im|i am)\s*([A-Za-z]+(?:\s+[A-Za-z]+){0,3})[\s\.]?/i;
+    const toTitleCase = (name) =>
+      name
+        .trim()
+        .split(/\s+/)
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+        .join(" ");
+
     const phoneRegex = /(\d{3})[ .-]?(\d{3})[ .-]?(\d{4})/;
     const emailRegex = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
     const addressRegex = /\d{1,5}\s[A-Za-z0-9\s,.#-]+(Street|St|Avenue|Ave|Road|Rd|Lane|Ln|Drive|Dr|Court|Ct|Trail|Way|Blvd|Boulevard|Place|Pl|Parkway|Pkwy)\b/i;
 
-    const hasName = nameRegex.test(allUserText);
-    const hasNumber = phoneRegex.test(allUserText);
+    // Determine the name to use
+    let nameToUse = null;
+    const myNameMatch = allUserText.match(myNameIsRegex);
+    if (myNameMatch && myNameMatch[1]) {
+      nameToUse = myNameMatch[1].trim();
+    } else {
+      const fullMatch = Array.from(allUserText.matchAll(fullNameRegex)).map((m) => m[0]);
+      const validFullNames = fullMatch.filter((name) => {
+        const parts = name.split(/\s+/);
+        return parts.every((p) => !nonNameSet.has(p.toLowerCase()));
+      });
+      if (validFullNames.length > 0) {
+        nameToUse = validFullNames[validFullNames.length - 1].trim();
+      } else {
+        const allSimpleMatches = Array.from(allUserText.matchAll(simpleNameRegex))
+          .map((m) => m[0])
+          .filter((candidate) => !nonNameSet.has(candidate.toLowerCase()));
+        if (allSimpleMatches.length > 0) {
+          nameToUse = allSimpleMatches[allSimpleMatches.length - 1].trim();
+        }
+      }
+    }
+
+    if (nameToUse) {
+      nameToUse = toTitleCase(nameToUse);
+    }
+
+    const hasName = !!(nameToUse && nameToUse.trim());
+    const hasNumber = phoneRegex.test(allUserText);
     const hasEmail = emailRegex.test(allUserText);
     const hasAddress = addressRegex.test(allUserText);
     const hasMinimumInfo = hasName && (hasNumber || hasEmail);
 
-    const nameMatch = allUserText.match(nameRegex);
+    const nameMatch = hasName ? [nameToUse] : null;
     const phoneMatch = allUserText.match(phoneRegex);
     const emailMatch = allUserText.match(emailRegex);
     const addressMatch = allUserText.match(addressRegex);
