@@ -60,10 +60,9 @@ export default async function handler(req, res) {
     // --- IMPROVED NAME EXTRACTION LOGIC ---
     const commonNonNames =
       "yard|dumpster|atlanta|peachtree|fairburn|fayetteville|newnan|tyrone|need|want|help|rental|rent|delivery|pickup|dropoff|drop-off|" +
-      "booking|book|booked|quote|pricing|price|cost|estimate|schedule|time|date|when|where|right|size|project|clean|cleanout|cleanup|cleaning|" +
-      "look|looking|find|finding|remove|removing|removal|junk|trash|debris|waste|hello|hi|hey|thanks|thank|yes|no|ok|okay";
-    const nonNameSet = new Set(commonNonNames.split("|").map((w) => w.toLowerCase()));
-    const simpleNameRegex = new RegExp(`\\b(?!(?:${commonNonNames})\\b)([a-z][a-z']{1,})\\b`, "gi");
+      "booking|book|booked|quote|pricing|price|cost|estimate|schedule|time|date|when|where|right|size|project|clean|cleanout|cleanup|cleaning|look|" +
+      "looking|find|finding|junk|trash|debris|waste|hello|hi|hey|thanks|thank|yes|no|ok|okay";
+    const simpleNameRegex = new RegExp(`\\b(?!${commonNonNames})([a-z][a-z']{1,})\\b`, "gi");
     const fullNameRegex = /\b([a-z][a-z']{1,})\s+([a-z][a-z']{1,})\b/gi;
     const myNameIsRegex = /(?:my name is|i\'m|im|i am)\s*([A-Za-z]+(?:\s+[A-Za-z]+){0,3})[\s\.]?/i;
     const toTitleCase = (name) =>
@@ -75,9 +74,7 @@ export default async function handler(req, res) {
 
     const phoneRegex = /(\d{3})[ .-]?(\d{3})[ .-]?(\d{4})/;
     const emailRegex = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
-    const addressPattern =
-      "(?<!\\d)(\\d{1,5}\\s+[A-Za-z0-9\\s,.#-]+(?:Street|St|Avenue|Ave|Road|Rd|Lane|Ln|Drive|Dr|Court|Ct|Trail|Way|Blvd|Boulevard|Place|Pl|Parkway|Pkwy)\\b)";
-    const addressRegex = new RegExp(addressPattern, "gi");
+    const addressRegex = /\d{1,5}\s[A-Za-z0-9\s,.#-]+(Street|St|Avenue|Ave|Road|Rd|Lane|Ln|Drive|Dr|Court|Ct|Trail|Way|Blvd|Boulevard|Place|Pl|Parkway|Pkwy)\b/i;
 
     // Determine the name to use
     let nameToUse = null;
@@ -85,20 +82,13 @@ export default async function handler(req, res) {
     if (myNameMatch && myNameMatch[1]) {
       nameToUse = myNameMatch[1].trim();
     } else {
-      const fullMatches = Array.from(allUserText.matchAll(fullNameRegex)).map((m) => m[0]);
-      const validFullNames = fullMatches.filter((name) => {
-        const parts = name.split(/\s+/);
-        return parts.every((p) => !nonNameSet.has(p.toLowerCase()));
-      });
-      if (validFullNames.length > 0) {
-        // Use the last full-name candidate to avoid early false positives like "I need"
-        nameToUse = validFullNames[validFullNames.length - 1].trim();
+      const fullMatch = allUserText.match(fullNameRegex);
+      if (fullMatch && fullMatch[0]) {
+        nameToUse = fullMatch[0].trim();
       } else {
-        const allSimpleMatches = Array.from(allUserText.matchAll(simpleNameRegex))
-          .map((m) => m[0])
-          .filter((candidate) => !nonNameSet.has(candidate.toLowerCase()));
+        const allSimpleMatches = Array.from(allUserText.matchAll(simpleNameRegex));
         if (allSimpleMatches.length > 0) {
-          nameToUse = allSimpleMatches[allSimpleMatches.length - 1].trim();
+          nameToUse = allSimpleMatches[allSimpleMatches.length - 1][0].trim();
         }
       }
     }
@@ -116,9 +106,9 @@ export default async function handler(req, res) {
     const hasMinimumInfo = hasName && (hasNumber || hasEmail);
 
     const nameMatch = hasName ? [nameToUse] : null;
-    const phoneMatch = allUserText.match(phoneRegex);
-    const emailMatch = allUserText.match(emailRegex);
-    // addressMatch already captured via addressMatches above to avoid grabbing trailing phone digits
+    const phoneMatch = allUserText.match(phoneRegex);
+    const emailMatch = allUserText.match(emailRegex);
+    const addressMatch = allUserText.match(addressRegex);
 
     const formatPhone = (m) => (m ? `${m[1]}-${m[2]}-${m[3]}` : "Not provided");
 
